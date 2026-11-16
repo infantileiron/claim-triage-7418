@@ -3,3 +3,11 @@
 -- trainings: frozen snapshot and holdout output JSON.
 -- reviews: training_id / claim_id foreign keys with unique source pair.
 -- Exact portable schema: src/models/entities.py.
+
+-- 抽检校正（分层随机抽检与入选概率加权估计）
+-- audit_batches: 绑定 training + result.pending 抽样框，threshold/seed/strata 冻结；
+--   open_key 唯一约束保证同配置未结案批次仅一条（结案后置 NULL）；
+--   state ∈ open/closed，revision 为当前结论的修订号，closed_revision/published_result_id 指向已发布结果。
+-- audit_samples: 每个入选样本一行，claim_id 唯一于批次；(stratum, include_prob, basis) 保存抽样依据，
+--   decision ∈ pending/valid/flagged，pending 永不视为正常。
+-- audit_results: (batch_id, revision) 唯一且不可变，保存完整估计与结论快照，供历史回看。

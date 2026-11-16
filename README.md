@@ -1,6 +1,6 @@
 # 禾序 · 报销异常分类复核
 
-财务共享组把历史人工复核标签训练成可解释的逻辑回归版本，再按异常概率排定待核票据；最终判断和签核由人员完成。原生 HTML/CSS/JS 四个业务页面：样本池、训练配置、分类评估、风险复核。
+财务共享组把历史人工复核标签训练成可解释的逻辑回归版本，再按异常概率排定待核票据；最终判断和签核由人员完成。原生 HTML/CSS/JS 五个业务页面：样本池、训练配置、分类评估、风险复核、抽检校正。
 
 ## 真实模拟场景
 
@@ -8,9 +8,9 @@
 
 | 角色 | 主要页面 | 权限 | 典型动作 |
 |---|---|---|---|
-| admin | 全部、签核 | 读写、训练、复核、签核和审计 | 签核已填人工判断的任务 |
-| analyst | 样本、训练、评估、复核 | 读写业务和提交训练，不能签核 | 补标签并生成复核候选 |
-| viewer | 四页只读 | 可看与下载，不能写入或训练 | 查看模型和冻结评分 |
+| admin | 全部、签核 | 读写、训练、复核、抽检结案、签核和审计 | 签核复核任务，结案并发布抽检校正结果 |
+| analyst | 样本、训练、评估、复核、抽检 | 读写业务、提交训练、发起抽检并填写结论，不能签核或结案 | 补标签、生成复核候选、分层抽检 |
+| viewer | 五页只读 | 可看与下载，不能写入、训练或结案 | 查看模型、冻结评分和抽检进度 |
 
 ## 一日剧本
 
@@ -22,12 +22,23 @@
 6. 09:40 生成当前版本高风险待标注样本的复核任务，重复生成不会重复添加。
 7. 10:00 analyst 复核原票据并填“核验正常”或“需进一步核实”及理由。
 8. 10:10 admin 签核人工结论；10:20 viewer 下载 `claim-triage-<版本ID>.json` 留档。
+9. 10:30 analyst 在抽检校正页对同一训练版本发起分层随机抽检：绑定其冻结的 40 笔待标注全集，按模型概率分 5 层各抽若干笔，每票记录入选概率与抽样依据。
+10. 10:45 抽查低分层的票据——只看高分票据会漏掉低分异常；填写“核验正常/需进一步核实”后系统按入选概率重算校正混淆矩阵与异常率。
+11. 11:00 分层仍有未结案或空抽时页面明确提示无法估计；全部结案后 admin 结案并发布该修订结果，viewer 下载明细 CSV 与历史 JSON。
 
 ## 算法与口径
 
 输入金额（0–100000元）、里程（0–10000km）、节假日布尔与人工标签 0/1/空。派生特征“每公里金额”为 amount/(distance+1)，加一避免零里程除零。标签不进入特征矩阵。
 
 已标注样本至少40笔且每类至少10笔，按标签分层分成75%训练/25%留出（seed=3106）。StandardScaler **只在训练集拟合**；Pipeline 后接 L2 LogisticRegression（C=1，max_iter=1000）。概率为 sigmoid(w·标准化特征+b)，阈值以上预测异常。Precision=TP/(TP+FP)，Recall=TP/(TP+FN)，F1=2PR/(P+R)，分母为零时指标为0。混淆矩阵合计等于留出集样本量。每个版本保留完整输入快照、训练/测试编号、训练集标准化均值、系数、留出概率与待标注概率、sha256 checksum。
+
+## 分层抽检与校正估计
+
+风险复核只覆盖阈值以上的高分候选，会系统性漏掉低分异常，因此另设独立抽检页。抽检批次绑定某个 **done** 训练版本 `result.pending`（待标注全集）作为固定抽样框；按模型概率分层（默认 `[0,0.2)…[0.8,1]`，区间须连续覆盖 0–1），每层抽取数量可配置。层内为简单随机无放回（SRSWOR），入选概率 `π_h=n_h/N_h`；请求抽取超过层内总体时按全查处理，`π=1`。抽样由 seed、训练 checksum 与层名共同决定，可复现。每个入选样本保存 `include_prob` 与 `basis`（层、`N_h`、`n_h`、seed、抽签序号、选择权重）。
+
+人工结论只有 `valid`(0) / `flagged`(1)；`pending` 永不视为正常。校正采用 Horvitz–Thompson 加权：层内每条已结案样本贡献 `N_h/n_h` 权重累加进混淆矩阵，异常率 = 估计异常笔数 / 总体笔数，标准误按分层 SRSWOR 方差合成（任一层 `1<n_h<N_h` 才可估；`n_h=1` 且未全查时点估计仍给出但标准误为 null）。**任一层存在未结案样本或空抽（N>0 且 n=0）时整体标记不可估计**，逐层列出原因，不输出会把未结案当正常的数字；总体为空的层不阻塞。
+
+结果按结论摘要版本化：`audit_results` 与批次修订一一对应且不可变。结论变更追加新修订并自动重算；同一结论的重试/重复重算幂等复用，不重复累计；A→B→A 更正也追加新修订，使“当前结果”始终是最新结论。结案在行锁内计算并只发布与该时刻结论一致的结果；结案后结论锁定（再改返回 409），结案与并发重算竞争时只会得到同一批结论的完整结果。失败重试沿用原抽样（批次与样本已落库，不重新抽签）；同配置重复发起复用未结案批次（数据库唯一键兜底跨进程竞争）。历史修订及其完整抽样依据、结论快照始终可回看与下载。
 
 阈值敏感度在同一留出集计算。反复选择阈值后，该集合不能继续当成最终独立验收集。本项目用于小规模业务演示，不包含额外生产验收集。标准化系数可解释模型关联，不作为因果结论。类别不足会以 failed 状态保存明确错误；重复编号返回409，无效金额/标签返回422。输入修订后须新建训练版本，旧快照不变。任务只对其快照里的待标注样本评分，不提供模型在线部署端点。评分仅排定人工复核顺序。
 
@@ -55,7 +66,7 @@ docker compose up -d --build
 | 异步 | Redis列表队列、独立Python worker与心跳 |
 | 数据 | MySQL8.0、Redis7；Nginx反代 `/api/` 去前缀 |
 
-`frontend/src` 下 api/stores/types/components/common/hooks/pages/router/utils/constants 分离网络、状态、契约、组件、表单、页面和枚举。`backend/src` 下 routes/controllers/services/models/schemas/middlewares/utils/constants/config 分离HTTP、查询、算法、持久化、校验、授权和配置。`backend/scripts/seed_demo.py` 用自然键只插入缺失账号/报销，不覆盖人工修订。`backend/migrations/001_initial.sql` 记录初始架构，实际初始DDL由SQLAlchemy metadata建立。
+`frontend/src` 下 api/stores/types/components/common/hooks/pages/router/utils/constants 分离网络、状态、契约、组件、表单、页面和枚举；抽检页为 `pages/audit.js`。`backend/src` 下 routes/controllers/services/models/schemas/middlewares/utils/constants/config 分离HTTP、查询、算法、持久化、校验、授权和配置；抽检抽样与校正估计在 `services/audit.py`。`backend/scripts/seed_demo.py` 用自然键只插入缺失账号/报销，不覆盖人工修订。`backend/migrations/001_initial.sql` 记录初始架构，实际初始DDL由SQLAlchemy metadata建立。
 
 共享枚举 ROLES/STATES/DECISIONS/LABELS 位于后端 `backend/src/constants/enums.py` 和前端 `frontend/src/constants/enums.js`；Pydantic枚举校验位于 `backend/src/schemas/business.py`，权限检查位于 `backend/src/middlewares/auth.py`。状态徽章/表格/表单字段为共享组件，两种中间件提供request ID和安全响应头；全局异常处理与审计记录横切业务。
 
@@ -65,6 +76,6 @@ docker compose up -d --build
 
 ## 已知范围
 
-逐条表单/API录入和完整字段修订；无CSV/Excel导入、删除、分页或外部审批通知。原始seed为确定性模拟数据，不能推断真实风险。风险复核任务不自动回写训练标签；须人工在样本页确认标签后重新训练。Google Fonts联网加载，离线字体回退。测试、截图和报告在源码外 `test-artifacts/gb-3106/`。
+逐条表单/API录入和完整字段修订；无CSV/Excel导入、删除、分页或外部审批通知。原始seed为确定性模拟数据，不能推断真实风险。风险复核任务不自动回写训练标签；须人工在样本页确认标签后重新训练。抽检结论不回写训练标签，也不改变训练版本快照。抽检结案后不可再改结论，如需更正须发起新批次。Google Fonts联网加载，离线字体回退。后端测试位于 `backend/tests/`（含可枚举小总体核对的校正估计、更正与结案/重算竞争用例）。
 
 License：MIT，见 LICENSE。

@@ -4,3 +4,14 @@
 .login .cover{background:oklch(30% .075 15);color:oklch(94% .025 80)}.login .cover .eyebrow{color:oklch(80% .045 60)}.split{grid-template-columns:minmax(0,1fr) 300px}.steps{line-height:2.5}.eval-grid{display:grid;grid-template-columns:1fr 1fr;gap:40px}.result-head{display:flex;justify-content:space-between;align-items:center}.coef{display:flex;align-items:center;gap:12px;padding:14px 0}.coef span{width:100px;flex-shrink:0}.coef i{height:12px;display:block}.coef b{font-weight:400;font-size:13px}.metrics{gap:50px}.metrics strong{font-size:34px}.notice{font-size:13px}.brand{font-size:20px}button:disabled{opacity:.5;cursor:not-allowed}@media(max-width:1000px){.split,.eval-grid{grid-template-columns:1fr}}@media(max-width:767px){.metrics{gap:15px}.metrics strong{font-size:26px}.result-head{display:block}}
 @media(max-width:767px){header{flex-wrap:wrap;gap:12px}header>div{max-width:100%;overflow-wrap:anywhere}.brand{font-size:18px}}
 .panel,.side{min-width:0}.scroll{max-width:100%}@media(max-width:1000px){.split,.eval-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* 抽检校正：分层输入、阻塞提示、历史依据 */
+.stratum-input{display:flex;align-items:center;gap:10px;margin:6px 0}
+.stratum-input span{flex:1;font-size:13px;color:var(--muted)}
+.stratum-input input{width:84px}
+.blockers{margin:8px 0 14px;padding-left:20px;line-height:2;font-size:13px}
+.blockers li{border-bottom:1px dashed var(--line)}
+.json{max-height:340px;overflow:auto;background:oklch(98% .008 70);border:1px solid var(--line);padding:14px;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+button.link{border:0;padding:0 4px;text-decoration:underline;color:var(--accent)}
+.metrics small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.notice.warn{border-left-color:oklch(55% .14 60);background:oklch(94% .04 70)}
